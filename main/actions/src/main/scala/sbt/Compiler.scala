@@ -61,13 +61,19 @@ object Compiler
 
 	def apply(in: Inputs, log: Logger): Analysis =
 	{
-			import in.compilers._
-			import in.config._
-			import in.incSetup._
+		import in.compilers._
+		import in.config._
+		import in.incSetup._
+		apply(in, new LoggerReporter(maxErrors, log, sourcePositionMapper), log)
+	}
+	def apply(in: Inputs, reporter: LoggerReporter, log: Logger): Analysis = {
+		import in.compilers._
+		import in.config._
+		import in.incSetup._
 
 		val agg = new AggressiveCompile(cacheFile)
 		agg(scalac, javac, sources, classpath, CompileOutput(classesDirectory), cache, None, options, javacOptions,
-		    analysisMap, definesClass, new LoggerReporter(maxErrors, log, sourcePositionMapper), order, skip, incOptions)(log)
+		    analysisMap, definesClass, reporter, order, skip, incOptions)(log)
 	}
 
 	private[sbt] def foldMappers[A](mappers: Seq[A => Option[A]]) =

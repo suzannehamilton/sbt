@@ -732,13 +732,14 @@ object Defaults extends BuildCommon
 	@deprecated("Use inTask(compile)(compileInputsSettings)", "0.13.0")
 	def compileTaskSettings: Seq[Setting[_]] = inTask(compile)(compileInputsSettings)
 
-	def compileTask: Initialize[Task[inc.Analysis]] = Def.task { compileTaskImpl(streams.value, (compileInputs in compile).value) }
-	private[this] def compileTaskImpl(s: TaskStreams, ci: Compiler.Inputs): inc.Analysis =
+	def compileTask: Initialize[Task[inc.Analysis]] = Def.task { compileTaskImpl(streams.value, (compileInputs in compile).value, (compileReporter in compile).value) }
+	private[this] def compileTaskImpl(s: TaskStreams, ci: Compiler.Inputs, rmaker: Logger => LoggerReporter): inc.Analysis =
 	{
 		lazy val x = s.text(ExportStream)
 		def onArgs(cs: Compiler.Compilers) = cs.copy(scalac = cs.scalac.onArgs(exported(x, "scalac")), javac = cs.javac.onArgs(exported(x, "javac")))
 		val i = ci.copy(compilers = onArgs(ci.compilers))
-		try Compiler(i,s.log)
+		val reporter = rmaker(s.log)
+		try Compiler(i, reporter, s.log)
 		finally x.close() // workaround for #937
 	}
 	def compileIncSetupTask =
@@ -747,14 +748,21 @@ object Defaults extends BuildCommon
 		}
 	def compileInputsSettings: Seq[Setting[_]] =
 		Seq(compileInputs := {
-			val cp = classDirectory.value +: data(dependencyClasspath.value)
-			Compiler.inputs(cp, sources.value, classDirectory.value, scalacOptions.value, javacOptions.value, maxErrors.value, sourcePositionMappers.value, compileOrder.value)(compilers.value, compileIncSetup.value, streams.value.log)
-		})
-
+			  val cp = classDirectory.value +: data(dependencyClasspath.value)
+			  Compiler.inputs(cp, sources.value, classDirectory.value, scalacOptions.value, javacOptions.value, maxErrors.value, sourcePositionMappers.value, compileOrder.value)(compilers.value, compileIncSetup.value, streams.value.log)
+		    },
+		    compileReporter <<= (maxErrors, sourcePositionMappers) map { 
+		    	(me, pm) =>
+                  newLoggerReporter(me, Compiler.foldMappers(pm)) _
+            }
+	    )
+    private def newLoggerReporter(maxErrors: Int, positions: xsbti.Position=>xsbti.Position)(log: Logger): LoggerReporter = {
+       new LoggerReporter(maxErrors, log, positions)
+    }
 	def printWarningsTask: Initialize[Task[Unit]] =
-		(streams, compile, maxErrors, sourcePositionMappers) map { (s, analysis, max, spms) =>
+		(streams, compile, maxErrors, sourcePositionMappers, compileReporter in compile) map { (s, analysis, max, spms, rmaker) =>
 			val problems = analysis.infos.allInfos.values.flatMap(i =>  i.reportedProblems++ i.unreportedProblems)
-			val reporter = new LoggerReporter(max, s.log, Compiler.foldMappers(spms))
+			val reporter = rmaker(s.log)
 			problems foreach { p => reporter.display(p.position, p.message, p.severity) }
 		}
 
